@@ -281,12 +281,16 @@ fork(void)
     return -1;
   }
 
+  // Instead of copy change counter and COW bit and RO
+  np->pagetable = p->pagetable; // Type <pagetable_t> is a pointer to <uint64>
+  // TODO: Call function that marks all pages as COW
+
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
-    freeproc(np);
-    release(&np->lock);
-    return -1;
-  }
+  // if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  //   freeproc(np);
+  //   release(&np->lock);
+  //   return -1;
+  // }
   np->sz = p->sz;
 
   // copy saved user registers.

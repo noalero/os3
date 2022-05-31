@@ -15,6 +15,10 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+#define NUM_PYS_PAGES ((PHYSTOP-KERNBASE) / PGSIZE)
+
+uint64 counters[NUM_PYS_PAGES] = { [ 0 ... (NUM_PYS_PAGES - 1) ] = 0}; // Initialized to zeros
+
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -431,4 +435,45 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+void
+increase_count(int index){
+  int old;
+  do{
+    old = counters[index];
+  } while(cas(&counters[index], old, old + 1)) ;
+}
+
+void
+decrease_counter(int index){
+  int old;
+  do{
+    old = counters[index];
+  } while(cas(&counters[index], old, old - 1)) ;
+
+  if(counters[index] == 0){
+    // TODO: free page
+  }
+}
+
+void
+mark_PTE_COW(pte_t *pte){
+*pte = (*pte | PTE_COW | PTE_R) & !PTE_W;
+}
+
+void
+free_page(pagetable_t pagetable, uint64 va){
+  if(va >= MAXVA)
+     panic("free_page");
+  
+  for(int level = 2; level > 0; level--) {
+    pte_t *pte = &pagetable[PX(level, va)];
+    pagetable[PX(level, va)] = 0;
+    if(*pte & PTE_V) 
+      pagetable = (pagetable_t)PTE2PA(*pte);
+  }
+  uint64 child = PTE2PA(pagetable[PX(0, va)]);
+  pagetable[PX(0, va)] = 0;
+  kfree((void*)child);
 }

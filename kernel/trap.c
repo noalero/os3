@@ -65,6 +65,9 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause  == 13 || r_scause == 15){ // Pagefault
+    //TODO
+    // Handel cases where COW flaf is off
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
