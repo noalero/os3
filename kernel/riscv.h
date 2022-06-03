@@ -357,6 +357,11 @@ sfence_vma()
 #define PXSHIFT(level)  (PGSHIFT+(9*(level)))
 #define PX(level, va) ((((uint64) (va)) >> PXSHIFT(level)) & PXMASK)
 
+#define OFFSETMASK     0xFFF // 12 bits
+#define PPNMASK        0xFFFFF << 44 // 44 MSB
+#define A_OFFSET(address) (((uint64) (address)) & OFFSETMASK)
+#define PA_PPN(pa)  (((uint64) (pa)) & PPNMASK)
+
 // one beyond the highest possible virtual address.
 // MAXVA is actually one bit less than the max allowed by
 // Sv39, to avoid having to sign-extend virtual addresses
