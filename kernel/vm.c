@@ -532,11 +532,12 @@ pagefault_handeler(){
         temp_va += PGSIZE;
         temp_pa += PGSIZE;
       }
+      p->pagetable = new_pagetable;
     }
     else{ // Change one page mapping
       if((src = kalloc()) == 0) goto bad;
       memmove(src, (char*)pa, PGSIZE);
-      if (mappages(new_pagetable, faulting_va, PGSIZE, (uint64*)src,  (PTE_FLAGS(pte) | 0x2 | 0xEFF)) != 0){
+      if (mappages(p->pagetable, faulting_va, PGSIZE, (uint64*)src,  (PTE_FLAGS(pte) | 0x2 | 0xEFF)) != 0){
         kfree(src);
         goto bad;
       }
