@@ -505,6 +505,7 @@ pagefault_handeler(){
 
   if(pte & PTE_COW){
     if(p->first_write == 0){ // First time p writes to one of it's pages
+      p->first_write = 1;
       // Create new empty <pagetable_t>
       if ((new_pagetable = uvmcreate()) == 0) goto bad;
       
