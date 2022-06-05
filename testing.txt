@@ -1,0 +1,11 @@
+struct {
+  struct spinlock lock;
+  uint counter[(PHYSTOP - KERNBASE) / PGSIZE];
+} refcnt;
+
+inline
+uint64
+pgindex(uint64 pa){
+  return (pa - KERNBASE) / PGSIZE;
+}
+

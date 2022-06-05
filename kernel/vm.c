@@ -16,14 +16,7 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
-#define NUM_PYS_PAGES ((PHYSTOP-KERNBASE) / PGSIZE)
-
-// typedef struct reference_counter
-// {
-//   int count; // Initialized to 0 / 1 ?
-//   uint64 pa;
-// }
-// struct reference_counter counters[NUM_PYS_PAGES] = { [ 0 ... (NUM_PYS_PAGES - 1) ] = 0}; // Initialized to zeros
+uint64 counters[NUM_PYS_PAGES] = { [ 0 ... (NUM_PYS_PAGES - 1) ] = 0}; // Initialized to zeros
 
 extern uint64 cas(volatile void *addr, int expected, int newval);
 
@@ -445,26 +438,26 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   }
 }
 
-// TODO
 void
-increase_count(int index){
-  // int old;
-  // do{
-  //   old = (counters[index]).count;
-  // } while(cas(&(counters[index]).count, old, old + 1)) ;
+increase_count(uint64 index){
+  int old;
+  do{
+    old = counters[index];
+  } while(cas(&counters[index], old, old + 1)) ;
 }
 
-// TODO
 void
-decrease_counter(int index){
-  // int old;
-  // do{
-  //   old =(counters[index]).count;
-  // } while(cas(&(counters[index]).count, old, old - 1)) ;
-
-  // if(!cas(&((counters[index]).count), 0, 0)){
-  //   kfree((counters[index]).pa);
-  // }
+decrease_counter(uint64 index){
+  int old;
+  if(cas(&counters[index], 0, 0)){
+    do{
+     old = counters[index];
+    } while(cas(&counters[index], old, old - 1)) ;
+  }
+  
+  if(!cas(&counters[index], 0, 0)){
+    kfree((void*)(RC_INDEX2PA(index)));
+  }
 }
 
 void
@@ -472,24 +465,14 @@ mark_PTE_COW(pte_t *pte){
 *pte = (*pte | PTE_COW | PTE_R) & ~PTE_W;
 }
 
-// TODO
 void
 free_page(pagetable_t pagetable, uint64 va){
   if(va >= MAXVA)
      panic("free_page");
-  
-  for(int level = 2; level > 0; level--) {
-    pte_t *pte = &pagetable[PX(level, va)];
-    pagetable[PX(level, va)] = 0;
-    if(*pte & PTE_V) 
-      pagetable = (pagetable_t)PTE2PA(*pte);
-  }
-  uint64 child = PTE2PA(pagetable[PX(0, va)]);
-  pagetable[PX(0, va)] = 0;
-  kfree((void*)child);
+  uint64 aligned_va = PGROUNDDOWN(va);
+  uvmunmap(pagetable, aligned_va, 1, 1);
 }
 
-// TODO: Add calls to <decrease)counter>
 void
 pagefault_handeler(){
   // <r_stval> holds faulting address. (va)
@@ -507,7 +490,7 @@ pagefault_handeler(){
       kfree(src);
       goto bad;
     }
-      // TODO: Decrease counter
+    decrease_counter(PA2RC_INDEX(pa));
   }
   else goto bad;
 
@@ -543,7 +526,8 @@ get_pagetable(struct proc *p, struct proc *np){
     temp_pte = walk(p->pagetable, temp_va, 0);
     mark_PTE_COW(temp_pte);
     mappages(new_pagetable, temp_va, PGSIZE, temp_pa, PTE_FLAGS(*temp_pte));        
-    // TODO: Increase counter
+    increase_count((PA2RC_INDEX(temp_pa)));
+
     if(temp_va == last) break;
     temp_va += PGSIZE;
     temp_pa += PGSIZE;
@@ -553,4 +537,25 @@ get_pagetable(struct proc *p, struct proc *np){
 bad:
   np->killed = 1;
   return -1;
+}
+
+void
+init_reference_counter(uint64 index){
+  int temp;
+  do{
+    temp = counters[index];
+  } while(cas(&(counters[index]), temp, 1)) ;
+}
+
+uint64
+get_reference_count(uint64 index){
+  return counters[index];
+}
+
+void
+zero_rc(uint64 index){
+  uint64 temp;
+  do{
+    temp = counters[index];
+  } while(cas(&(counters[index]), temp, 0));
 }
