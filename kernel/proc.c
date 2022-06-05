@@ -119,7 +119,6 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
-  p->first_write = 0;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -283,16 +282,13 @@ fork(void)
     return -1;
   }
 
-  // Instead of copy change counter and COW bit and RO
-  np->pagetable = p->pagetable; // Type <pagetable_t> is a pointer to <uint64>
-  // TODO: Call function that marks all pages as COW
-
-  // Copy user memory from parent to child.
-  // if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
-  //   freeproc(np);
-  //   release(&np->lock);
-  //   return -1;
-  // }
+  // Instead of copy pages, create new <pagetable_t> and add mapping, mark pages as COW and Increase counter
+  if (get_pagetable(p, np) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+ 
   np->sz = p->sz;
 
   // copy saved user registers.

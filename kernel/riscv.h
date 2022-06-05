@@ -358,7 +358,7 @@ sfence_vma()
 #define PX(level, va) ((((uint64) (va)) >> PXSHIFT(level)) & PXMASK)
 
 #define OFFSETMASK     0xFFF // 12 bits
-#define PPNMASK        0xFFFFF << 44 // 44 MSB
+#define PPNMASK        0xFFFFFFFFFFF << 20 // 44 MSB
 #define A_OFFSET(address) (((uint64) (address)) & OFFSETMASK)
 #define PA_PPN(pa)  (((uint64) (pa)) & PPNMASK)
 

@@ -18,12 +18,12 @@ extern char trampoline[]; // trampoline.S
 
 #define NUM_PYS_PAGES ((PHYSTOP-KERNBASE) / PGSIZE)
 
-typedef struct reference_counter
-{
-  int count; // Initialized to 0 / 1 ?
-  uint64 pa;
-};
-struct reference_counter counters[NUM_PYS_PAGES] = { [ 0 ... (NUM_PYS_PAGES - 1) ] = 0}; // Initialized to zeros
+// typedef struct reference_counter
+// {
+//   int count; // Initialized to 0 / 1 ?
+//   uint64 pa;
+// }
+// struct reference_counter counters[NUM_PYS_PAGES] = { [ 0 ... (NUM_PYS_PAGES - 1) ] = 0}; // Initialized to zeros
 
 extern uint64 cas(volatile void *addr, int expected, int newval);
 
@@ -448,23 +448,23 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 // TODO
 void
 increase_count(int index){
-  int old;
-  do{
-    old = (counters[index]).count;
-  } while(cas(&(counters[index]).count, old, old + 1)) ;
+  // int old;
+  // do{
+  //   old = (counters[index]).count;
+  // } while(cas(&(counters[index]).count, old, old + 1)) ;
 }
 
 // TODO
 void
 decrease_counter(int index){
-  int old;
-  do{
-    old =(counters[index]).count;
-  } while(cas(&(counters[index]).count, old, old - 1)) ;
+  // int old;
+  // do{
+  //   old =(counters[index]).count;
+  // } while(cas(&(counters[index]).count, old, old - 1)) ;
 
-  if(!cas(&((counters[index]).count), 0, 0)){
-    kfree((counters[index]).pa);
-  }
+  // if(!cas(&((counters[index]).count), 0, 0)){
+  //   kfree((counters[index]).pa);
+  // }
 }
 
 void
@@ -493,60 +493,24 @@ free_page(pagetable_t pagetable, uint64 va){
 void
 pagefault_handeler(){
   // <r_stval> holds faulting address. (va)
-  uint64 *faulting_va = r_stval();
+  uint64 faulting_va = r_stval();
   struct proc *p = myproc();
-  pte_t pte = walk(p->pagetable, faulting_va, 0);
+  pte_t *pte = walk(p->pagetable, faulting_va, 0);
   uint64 pa = walkaddr(p->pagetable, faulting_va);
-  uint64 oldsz = p->sz;
-  pagetable_t *new_pagetable;
-  uint64 temp_va, temp_pa, last;
-  pte_t temp_pte;
   char *src;
 
-  if(pte & PTE_COW){
-    if(p->first_write == 0){ // First time p writes to one of it's pages
-      p->first_write = 1;
-      // Create new empty <pagetable_t>
-      if ((new_pagetable = uvmcreate()) == 0) goto bad;
-      
-      temp_va = PGROUNDDOWN(p->kstack);
-      temp_pa = walkaddr(p->pagetable, temp_va);
-      last = PGROUNDDOWN(temp_va + oldsz - 1);
-      for(;;){
-        // Add maping for new page
-        if(temp_pa == pa){
-          if((src = kalloc()) == 0) goto bad;
-          memmove(src, (char*)pa, PGSIZE);
-          temp_pte = walk(p->pagetable, temp_va, 0);
-          if (mappages(new_pagetable, temp_va, PGSIZE, (uint64*)src,  (PTE_FLAGS(temp_pte) | 0x2 | 0xEFF)) != 0){
-            kfree(src);
-            goto bad;
-          }
-          // TODO: Decrease counter
-        }
-        else{
-          temp_pte = walk(p->pagetable, temp_va, 0);
-          mappages(new_pagetable, temp_va, PGSIZE, temp_pa, PTE_FLAGS(temp_pte));        
-        }
-        if(temp_va == last) break;
-        temp_va += PGSIZE;
-        temp_pa += PGSIZE;
-      }
-      p->pagetable = new_pagetable;
+  if(*pte & PTE_COW){
+    // Change one page mapping
+    if((src = kalloc()) == 0) goto bad;
+    memmove(src, (char*)pa, PGSIZE);
+    if (mappages(p->pagetable, faulting_va, PGSIZE, (uint64)src,  (PTE_FLAGS(*pte) | 0x2 | 0xEFF)) != 0){
+      kfree(src);
+      goto bad;
     }
-    else{ // Change one page mapping
-      if((src = kalloc()) == 0) goto bad;
-      memmove(src, (char*)pa, PGSIZE);
-      if (mappages(p->pagetable, faulting_va, PGSIZE, (uint64*)src,  (PTE_FLAGS(pte) | 0x2 | 0xEFF)) != 0){
-        kfree(src);
-        goto bad;
-      }
       // TODO: Decrease counter
-    }
   }
-  else{
-    goto bad;
-  }
+  else goto bad;
+
 bad:
   p->killed = 1;
   return;
@@ -559,4 +523,34 @@ get_real_address(uint64 pa){
   ppn = PA_PPN(pa);
   real_address = KERNBASE + (PGSIZE * ppn) + offset;
   return real_address;
+}
+
+int
+get_pagetable(struct proc *p, struct proc *np){
+  pagetable_t new_pagetable;
+  uint64 temp_va, temp_pa, last;
+  pte_t *temp_pte;
+  uint64 oldsz = p->sz;
+
+  // Create new empty <pagetable_t>
+  if ((new_pagetable = uvmcreate()) == 0) goto bad;
+  
+  temp_va = PGROUNDDOWN(np->kstack);
+  temp_pa = walkaddr(np->pagetable, temp_va);
+  last = PGROUNDDOWN(temp_va + oldsz - 1);
+  for(;;){
+    // Add maping for new page
+    temp_pte = walk(p->pagetable, temp_va, 0);
+    mark_PTE_COW(temp_pte);
+    mappages(new_pagetable, temp_va, PGSIZE, temp_pa, PTE_FLAGS(*temp_pte));        
+    // TODO: Increase counter
+    if(temp_va == last) break;
+    temp_va += PGSIZE;
+    temp_pa += PGSIZE;
+  }
+  np->pagetable = new_pagetable;
+  return 1;
+bad:
+  np->killed = 1;
+  return -1;
 }
