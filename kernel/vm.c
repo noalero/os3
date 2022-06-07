@@ -479,18 +479,23 @@ pagefault_handeler(){
   uint64 faulting_va = r_stval();
   struct proc *p = myproc();
   pte_t *pte = walk(p->pagetable, faulting_va, 0);
-  uint64 pa = walkaddr(p->pagetable, faulting_va);
+  uint64 pa = walkaddr(p->pagetable, faulting_va); // PTE2PA(*pte);
   char *src;
 
   if(*pte & PTE_COW){
-    // Change one page mapping
-    if((src = kalloc()) == 0) goto bad;
-    memmove(src, (char*)pa, PGSIZE);
-    if (mappages(p->pagetable, faulting_va, PGSIZE, (uint64)src,  (PTE_FLAGS(*pte) | 0x2 | 0xEFF)) != 0){
-      kfree(src);
-      goto bad;
+    if(get_reference_count(PA2RC_INDEX(pa)) > 1){
+      // Change one page mapping
+      if((src = kalloc()) == 0) goto bad;
+      memmove(src, (char*)pa, PGSIZE);
+      if (mappages(p->pagetable, faulting_va, PGSIZE, (uint64)src,  (PTE_FLAGS(*pte) | 0x2 | 0xEFF)) != 0){
+        kfree(src);
+        goto bad;
+      }
+      decrease_counter(PA2RC_INDEX(pa));
     }
-    decrease_counter(PA2RC_INDEX(pa));
+    else{ // mark W 
+      *pte = (*pte | PTE_W) & ~PTE_COW;
+    } 
   }
   else goto bad;
 
