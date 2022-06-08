@@ -5,7 +5,6 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
-#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -352,9 +351,13 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+  pte_t *pte;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+
+    pte = walk(pagetable, va0, 0);
+    if(pte && (*pte & PTE_COW) != 0) return pagefault_handler(pagetable);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
@@ -465,43 +468,33 @@ mark_PTE_COW(pte_t *pte){
 *pte = (*pte | PTE_COW | PTE_R) & ~PTE_W;
 }
 
-void
-free_page(pagetable_t pagetable, uint64 va){
-  if(va >= MAXVA)
-     panic("free_page");
-  uint64 aligned_va = PGROUNDDOWN(va);
-  uvmunmap(pagetable, aligned_va, 1, 1);
-}
-
-void
-pagefault_handeler(){
+int
+pagefault_handler(pagetable_t pt){
   // <r_stval> holds faulting address. (va)
-  uint64 faulting_va = r_stval();
-  struct proc *p = myproc();
-  pte_t *pte = walk(p->pagetable, faulting_va, 0);
-  uint64 pa = walkaddr(p->pagetable, faulting_va); // PTE2PA(*pte);
+  uint64 pa, faulting_va = r_stval();
   char *src;
+  faulting_va = PGROUNDDOWN(faulting_va);
+  if(faulting_va > MAXVA) goto bad;
+  pte_t *pte = walk(pt, faulting_va, 0);
 
-  if(*pte & PTE_COW){
-    if(get_reference_count(PA2RC_INDEX(pa)) > 1){
-      // Change one page mapping
-      if((src = kalloc()) == 0) goto bad;
-      memmove(src, (char*)pa, PGSIZE);
-      if (mappages(p->pagetable, faulting_va, PGSIZE, (uint64)src,  (PTE_FLAGS(*pte) | 0x2 | 0xEFF)) != 0){
-        kfree(src);
-        goto bad;
-      }
-      decrease_counter(PA2RC_INDEX(pa));
-    }
-    else{ // mark W 
-      *pte = (*pte | PTE_W) & ~PTE_COW;
-    } 
-  }
-  else goto bad;
+  if((pte == 0) || (PTE_FLAGS(*pte) & (PTE_COW | PTE_V)) == 0) goto bad;
+  pa = PTE2PA(*pte);
+
+  if(get_reference_count(PA2RC_INDEX(pa)) > 1){
+    if((src = kalloc()) == 0) goto bad;
+    memmove(src, (char*)pa, PGSIZE);
+    *pte =  PA2PTE(src) | ((PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W);
+    // if (mappages(pt, faulting_va, PGSIZE, (uint64)src,  (PTE_FLAGS(*pte) & ((~PTE_COW) | PTE_W))) != 0){
+    //   kfree(src);
+    //   goto bad;
+    // }
+    decrease_counter(PA2RC_INDEX(pa));
+
+  } else *pte = ((*pte) & (~PTE_COW)) | PTE_W;
+  return 1;
 
 bad:
-  p->killed = 1;
-  return;
+  return -1;
 }
 
 uint64
@@ -514,33 +507,29 @@ get_real_address(uint64 pa){
 }
 
 int
-get_pagetable(struct proc *p, struct proc *np){
-  pagetable_t new_pagetable;
-  uint64 temp_va, temp_pa, last;
+get_pagetable(pagetable_t p_pt, pagetable_t np_pt, uint64 oldsz){
+  uint64 temp_pa, temp_va, last;
   pte_t *temp_pte;
-  uint64 oldsz = p->sz;
+  int temp = 0;
 
-  // Create new empty <pagetable_t>
-  if ((new_pagetable = uvmcreate()) == 0) goto bad;
-  
-  temp_va = PGROUNDDOWN(np->kstack);
-  temp_pa = walkaddr(np->pagetable, temp_va);
-  last = PGROUNDDOWN(temp_va + oldsz - 1);
+  temp_va = 0;
+  last = PGROUNDDOWN(oldsz - 1);
   for(;;){
-    // Add maping for new page
-    temp_pte = walk(p->pagetable, temp_va, 0);
+    temp_pte = walk(p_pt, temp_va, 0);
+    if (temp_pte == 0 || ((*temp_pte & PTE_V) == 0)) goto bad;
+    temp_pa = PTE2PA(*temp_pte);
     mark_PTE_COW(temp_pte);
-    mappages(new_pagetable, temp_va, PGSIZE, temp_pa, PTE_FLAGS(*temp_pte));        
-    increase_count((PA2RC_INDEX(temp_pa)));
+    temp = mappages(np_pt, temp_va, PGSIZE, temp_pa, PTE_FLAGS(*temp_pte));
+    if(temp < 0) goto bad;
+    increase_count(PA2RC_INDEX(temp_pa));
 
     if(temp_va == last) break;
     temp_va += PGSIZE;
-    temp_pa += PGSIZE;
   }
-  np->pagetable = new_pagetable;
-  return 1;
+  return 0;
 bad:
-  np->killed = 1;
+  if(temp < 0)  uvmunmap(np_pt, 0, temp_va / PGSIZE, 1);
+  else if(temp_va / PGSIZE > 0) uvmunmap(np_pt, 0, ((temp_va / PGSIZE) - 1), 1);
   return -1;
 }
 

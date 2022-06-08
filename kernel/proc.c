@@ -281,13 +281,20 @@ fork(void)
     return -1;
   }
 
+  // Copy user memory from parent to child.
+  // if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  //   freeproc(np);
+  //   release(&np->lock);
+  //   return -1;
+  // }
+
   // Instead of copy pages, create new <pagetable_t> and add mapping, mark pages as COW and Increase counter
-  if (get_pagetable(p, np) < 0){
+  if(get_pagetable(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
   }
- 
+
   np->sz = p->sz;
 
   // copy saved user registers.
@@ -554,6 +561,7 @@ sleep(void *chan, struct spinlock *lk)
   release(&p->lock);
   acquire(lk);
 }
+
 
 // Wake up all processes sleeping on chan.
 // Must be called without any p->lock.
