@@ -85,7 +85,7 @@ pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
   if(va >= MAXVA)
-    panic("walk");
+    panic("walk");    
 
   for(int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
@@ -355,7 +355,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-
+    if(va0 >= MAXVA) return -1;
     pte = walk(pagetable, va0, 0);
     if(pte && (*pte & PTE_COW) != 0) return pagefault_handler(pagetable);
     pa0 = walkaddr(pagetable, va0);
@@ -474,7 +474,7 @@ pagefault_handler(pagetable_t pt){
   uint64 pa, faulting_va = r_stval();
   char *src;
   faulting_va = PGROUNDDOWN(faulting_va);
-  if(faulting_va > MAXVA) goto bad;
+  if(faulting_va >= MAXVA) goto bad;
   pte_t *pte = walk(pt, faulting_va, 0);
 
   if((pte == 0) || (PTE_FLAGS(*pte) & (PTE_COW | PTE_V)) == 0) goto bad;
