@@ -28,6 +28,7 @@ kinit()
 {
   initlock(&kmem.lock, "kmem");
   freerange(end, (void*)PHYSTOP);
+  init_counters_array();
 }
 
 void
@@ -48,18 +49,17 @@ kfree(void *pa)
 {
   struct run *r;
 
+  if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
+    panic("kfree");
   
-  if(get_reference_count(PA2RC_INDEX((uint64)(pa))) > 1){
-    decrease_counter(PA2RC_INDEX((uint64)(pa)));
+  if(get_reference_count((uint64)(pa)) > 1){
+    decrease_counter((uint64)(pa));
     return;
   } 
 
-  if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
-    panic("kfree");
-
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
-  zero_rc(PA2RC_INDEX((uint64)pa)); 
+  zero_rc((uint64)pa);
 
   r = (struct run*)pa;
 
@@ -79,15 +79,16 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+
+  if(r){
     kmem.freelist = r->next;
+    increase_count((uint64)r);
+  }
+    
   release(&kmem.lock);
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
 
-  if(r)
-    init_reference_counter(PA2RC_INDEX((uint64)r)); // Initialize new page <reference_counter> to 1 
-  
   return (void*)r;
 }

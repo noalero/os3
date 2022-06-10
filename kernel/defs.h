@@ -170,16 +170,14 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
-void            increase_count(uint64 index);
-void            decrease_counter(uint64 index);
+void            increase_count(uint64 pa);
+void            decrease_counter(uint64 pa);
 void            mark_PTE_COW(pte_t *pte);
-//void            free_page(pagetable_t pagetable, uint64 va);
-int             pagefault_handler(pagetable_t pt);
-uint64          get_real_address(uint64 pa);
+int             pagefault_handler(pagetable_t pt, uint64 faulting_va);
 int             get_pagetable(pagetable_t p_pt, pagetable_t np_pt, uint64 oldsz);
-void            init_reference_counter(uint64 index);
-uint64          get_reference_count(uint64 index);
-void            zero_rc(uint64 index);
+uint64          get_reference_count(uint64 pa);
+void            zero_rc(uint64 pa);
+void            init_counters_array();
 
 // plic.c
 void            plicinit(void);

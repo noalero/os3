@@ -66,7 +66,9 @@ usertrap(void)
 
     syscall();
   } else if(r_scause() == 15){ // Pagefault
-      if(pagefault_handler(myproc()->pagetable) < 0) p->killed = 1;
+      uint64 faulting_va = PGROUNDDOWN(r_stval());
+      if(faulting_va >= p->sz || pagefault_handler(p->pagetable, faulting_va) != 1) p->killed = 1;
+       // <r_stval> holds faulting address. (va)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {

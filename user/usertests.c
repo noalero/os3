@@ -717,11 +717,8 @@ exectest(char *s)
   unlink("echo-ok");
   if(buf[0] == 'O' && buf[1] == 'K')
     exit(0);
-  else {
-    printf("%s: wrong output\n", s);
+  else 
     exit(1);
-  }
-
 }
 
 // simple fork and pipe read/write
@@ -756,10 +753,8 @@ pipe1(char *s)
     cc = 1;
     while((n = read(fds[0], buf, cc)) > 0){
       for(i = 0; i < n; i++){
-        if((buf[i] & 0xff) != (seq++ & 0xff)){
-          printf("%s: pipe1 oops 2\n", s);
+        if((buf[i] & 0xff) != (seq++ & 0xff))
           return;
-        }
       }
       total += n;
       cc = cc * 2;
@@ -1190,10 +1185,8 @@ fourfiles(char *s)
     total = 0;
     while((n = read(fd, buf, sizeof(buf))) > 0){
       for(j = 0; j < n; j++){
-        if(buf[j] != '0'+i){
-          printf("wrong char\n", s);
+        if(buf[j] != '0'+i)
           exit(1);
-        }
       }
       total += n;
     }
@@ -1311,10 +1304,8 @@ unlinkread(char *s)
     printf("%s: unlinkread read failed", s);
     exit(1);
   }
-  if(buf[0] != 'h'){
-    printf("%s: unlinkread wrong data\n", s);
+  if(buf[0] != 'h')
     exit(1);
-  }
   if(write(fd, buf, 10) != 10){
     printf("%s: unlinkread write failed\n", s);
     exit(1);
@@ -1596,10 +1587,8 @@ subdir(char *s)
     exit(1);
   }
   cc = read(fd, buf, sizeof(buf));
-  if(cc != 2 || buf[0] != 'f'){
-    printf("%s: dd/dd/../ff wrong content\n", s);
+  if(cc != 2 || buf[0] != 'f')
     exit(1);
-  }
   close(fd);
 
   if(link("dd/dd/ff", "dd/dd/ffff") != 0){

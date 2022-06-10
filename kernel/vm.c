@@ -15,7 +15,7 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
-uint64 counters[NUM_PYS_PAGES] = { [ 0 ... (NUM_PYS_PAGES - 1) ] = 0}; // Initialized to zeros
+uint64 counters[NUM_PYS_PAGES]; // = { [ 0 ... (NUM_PYS_PAGES - 1) ] = 0}; // Initialized to zeros
 
 extern uint64 cas(volatile void *addr, int expected, int newval);
 
@@ -351,13 +351,10 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
-  pte_t *pte;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    if(va0 >= MAXVA) return -1;
-    pte = walk(pagetable, va0, 0);
-    if(pte && (*pte & PTE_COW) != 0) return pagefault_handler(pagetable);
+    if(pagefault_handler(pagetable, va0) < 0) return -1;
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
@@ -442,114 +439,112 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 }
 
 void
-increase_count(uint64 index){
-  int old;
+increase_count(uint64 pa){
+  int old, index = PA2RC_INDEX(pa);
   do{
     old = counters[index];
   } while(cas(&counters[index], old, old + 1)) ;
 }
 
 void
-decrease_counter(uint64 index){
-  int old;
+decrease_counter(uint64 pa){
+  int old, index = PA2RC_INDEX(pa);
   if(cas(&counters[index], 0, 0)){
     do{
      old = counters[index];
     } while(cas(&counters[index], old, old - 1)) ;
   }
-  
-  if(!cas(&counters[index], 0, 0)){
-    kfree((void*)(RC_INDEX2PA(index)));
-  }
 }
 
 void
 mark_PTE_COW(pte_t *pte){
-*pte = (*pte | PTE_COW | PTE_R) & ~PTE_W;
+*pte = (*pte | PTE_COW) & (~PTE_W);
 }
 
 int
-pagefault_handler(pagetable_t pt){
-  // <r_stval> holds faulting address. (va)
-  uint64 pa, faulting_va = r_stval();
+pagefault_handler(pagetable_t pt, uint64 faulting_va){
+  uint64 pa;
   char *src;
+  pte_t *pte;
+  int return_value = 1;
+
   faulting_va = PGROUNDDOWN(faulting_va);
-  if(faulting_va >= MAXVA) goto bad;
-  pte_t *pte = walk(pt, faulting_va, 0);
+  if(faulting_va >= MAXVA){
+    return_value = -1;
+    goto fin;
+  } 
+  pte = walk(pt, faulting_va, 0);
+  if((!pte)){
+    return_value = -1;
+    goto fin;
+  }
+  if(((*pte) & PTE_V) == 0){
+    return_value = -1;
+    goto fin;
+  }
+  if(((*pte) & PTE_COW) == 0){
+    return_value = 2;
+    goto fin;
+  }
 
-  if((pte == 0) || (PTE_FLAGS(*pte) & (PTE_COW | PTE_V)) == 0) goto bad;
   pa = PTE2PA(*pte);
+  if((src = kalloc()) == 0){
+    return_value = -1;
+    goto fin;
+  } 
 
-  if(get_reference_count(PA2RC_INDEX(pa)) > 1){
-    if((src = kalloc()) == 0) goto bad;
-    memmove(src, (char*)pa, PGSIZE);
-    *pte =  PA2PTE(src) | ((PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W);
-    // if (mappages(pt, faulting_va, PGSIZE, (uint64)src,  (PTE_FLAGS(*pte) & ((~PTE_COW) | PTE_W))) != 0){
-    //   kfree(src);
-    //   goto bad;
-    // }
-    decrease_counter(PA2RC_INDEX(pa));
-
-  } else *pte = ((*pte) & (~PTE_COW)) | PTE_W;
-  return 1;
-
-bad:
-  return -1;
-}
-
-uint64
-get_real_address(uint64 pa){
-  uint64 real_address, ppn, offset;
-  offset = A_OFFSET(pa);
-  ppn = PA_PPN(pa);
-  real_address = KERNBASE + (PGSIZE * ppn) + offset;
-  return real_address;
+  memmove(src, (char*)pa, PGSIZE);
+  *pte =  PA2PTE(src) | ((PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W);
+  // if (mappages(pt, faulting_va, PGSIZE, (uint64)src,  (PTE_FLAGS(*pte) & (~PTE_COW)) | PTE_W) != 0){
+  //   kfree(src);
+  //   goto bad;
+  // }
+  kfree((void*)(pa)); // calls <decrease_counter>, if <counters[index]> == 1, also free pa
+fin:
+  return return_value;
 }
 
 int
 get_pagetable(pagetable_t p_pt, pagetable_t np_pt, uint64 oldsz){
   uint64 temp_pa, temp_va, last;
   pte_t *temp_pte;
-  int temp = 0;
 
   temp_va = 0;
   last = PGROUNDDOWN(oldsz - 1);
   for(;;){
-    temp_pte = walk(p_pt, temp_va, 0);
-    if (temp_pte == 0 || ((*temp_pte & PTE_V) == 0)) goto bad;
+    if(temp_va >= MAXVA) panic("get_pagetable: walk");
+    if(((temp_pte = walk(p_pt, temp_va, 0)) == 0) || ((*temp_pte & PTE_V) == 0))
+      panic("get_pagetable");
     temp_pa = PTE2PA(*temp_pte);
     mark_PTE_COW(temp_pte);
-    temp = mappages(np_pt, temp_va, PGSIZE, temp_pa, PTE_FLAGS(*temp_pte));
-    if(temp < 0) goto bad;
-    increase_count(PA2RC_INDEX(temp_pa));
+    if(mappages(np_pt, temp_va, PGSIZE, temp_pa, PTE_FLAGS(*temp_pte)) < 0) goto bad;
+    increase_count(temp_pa);
 
     if(temp_va == last) break;
     temp_va += PGSIZE;
   }
   return 0;
 bad:
-  if(temp < 0)  uvmunmap(np_pt, 0, temp_va / PGSIZE, 1);
-  else if(temp_va / PGSIZE > 0) uvmunmap(np_pt, 0, ((temp_va / PGSIZE) - 1), 1);
+   uvmunmap(np_pt, 0, temp_va / PGSIZE, 1);
+  //else if(temp_va / PGSIZE > 0) uvmunmap(np_pt, 0, ((temp_va / PGSIZE) - 1), 1);
   return -1;
 }
 
-void
-init_reference_counter(uint64 index){
-  int temp;
-  do{
-    temp = counters[index];
-  } while(cas(&(counters[index]), temp, 1)) ;
-}
-
 uint64
-get_reference_count(uint64 index){
+get_reference_count(uint64 pa){
+  uint64 index = PA2RC_INDEX(pa);
   return counters[index];
 }
 
 void
-zero_rc(uint64 index){
-  uint64 temp;
+zero_rc(uint64 pa){
+  uint64 temp, index = PA2RC_INDEX(pa);
   do{
     temp = counters[index];
   } while(cas(&(counters[index]), temp, 0));
+}
+
+void
+init_counters_array(){
+  memset(counters, 0, sizeof(int)*NUM_PYS_PAGES);
 }
